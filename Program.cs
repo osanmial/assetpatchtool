@@ -2,59 +2,104 @@
 using AssetPatchTool;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
+using Microsoft.Extensions.Logging;
 using Tomlyn;
 using Tomlyn.Model;
 
+using ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+ILogger logger = loggerFactory.CreateLogger("AssetPatchTool");
+
 const string managed = "Managed";
+const string globalGameManagersPath = "globalgamemanagers.assets";
 const string configPath = "config.json";
 string[] tpkPaths = ["lz4.tpk", "lzma_file.tpk", "uncompressed.tpk"];
 
 string gameAssetPath;
 string classPackage;
 string backupPath;
-string managedPath;
 
 
-void ApplyPatchesToFile(string assetFile, List<AssetPatch> patchGroup)
+void ApplyPatchesToFile(string assetFileName, List<AssetPatch> patchGroup)
 {
-    // Initialize asset manager
-    string bundlePath = Path.Combine(gameAssetPath, assetFile);
-    string managedPath = Path.Combine(gameAssetPath, managed);
+    logger.LogInformation("Patching file \"{FileName}\"", assetFileName);
 
+    // This should never happen but lets make extra sure
+    if (!patchGroup.All(patch => patch.AssetFile == assetFileName))
+    {
+        throw new Exception("Developer Error: patch files were not grouped correctly");
+    }
+
+    ensureGlobalGameManagersExists();
+
+    // Initialize asset manager
     var manager = new AssetsManager
     {
-        MonoTempGenerator = new MonoCecilTempGenerator(managedPath)
+        MonoTempGenerator = new MonoCecilTempGenerator(Path.Combine(gameAssetPath, managed))
     };
     manager.LoadClassPackage(classPackage);
 
+    // Load asset file
+    string assetFilePath = Path.Combine(gameAssetPath, assetFileName);
+    string backupFilePath = Path.Combine(backupPath, assetFileName);
 
-    // Load bundle file
-    AssetsFileInstance bundleInst = manager.LoadAssetsFile(bundlePath, true);
-    AssetsFile bundleFile = bundleInst.file;
+    if (!File.Exists(backupFilePath))
+    {
+        if (!File.Exists(assetFilePath))
+        {
+            throw new Exception(String.Format("Asset file \"{0}\" not found", assetFileName));
+        }
 
-    manager.LoadClassDatabaseFromPackage(bundleFile.Metadata.UnityVersion);
+        logger.LogInformation("Backing up \"{OriginalFile}\" to \"{BackupFile}\"", assetFilePath, backupFilePath);
+
+        File.Copy(assetFilePath, backupFilePath);
+    }
+
+    AssetsFileInstance assetFileInstance = manager.LoadAssetsFile(backupFilePath, false);
+    AssetsFile assetFile = assetFileInstance.file;
+
+    manager.LoadClassDatabaseFromPackage(assetFile.Metadata.UnityVersion);
 
     // Apply patches
     foreach (AssetPatch assetPatch in patchGroup)
     {
-        var assetFileInfo = bundleFile.GetAssetInfo(assetPatch.AssetPathId);
-        var baseInfo = manager.GetBaseField(bundleInst, assetFileInfo);
+        var assetFileInfo = assetFile.GetAssetInfo(assetPatch.AssetPathId);
+        var baseInfo = manager.GetBaseField(assetFileInstance, assetFileInfo);
 
         if (baseInfo == null)
         {
             continue;
         }
 
-        ApplyPatch(baseInfo, assetPatch.Patches);
+        ApplyPatch(baseInfo, assetPatch.Patches, [baseInfo["m_Name"].AsString]);
 
         assetFileInfo.SetNewData(baseInfo);
     }
 
-    using AssetsFileWriter writer = new(assetFile);
-    bundleFile.Write(writer);
+    logger.LogInformation("Writing file \"{OutputFile}\"", assetFileName);
+
+    using AssetsFileWriter writer = new(assetFilePath);
+    assetFile.Write(writer);
 }
 
-void ApplyPatch(AssetTypeValueField field, TomlTable patches)
+void ensureGlobalGameManagersExists()
+{
+    string gameManagerPath = Path.Combine(gameAssetPath, globalGameManagersPath);
+    string backupGameManagerPath = Path.Combine(backupPath, globalGameManagersPath);
+
+    if (!File.Exists(backupGameManagerPath))
+    {
+        if (!File.Exists(gameManagerPath))
+        {
+            throw new Exception(String.Format("Game manager file \"{0}\" not found", gameManagerPath));
+        }
+
+        logger.LogInformation("Backing up \"{OriginalFile}\" to \"{BackupFile}\"", gameManagerPath, backupGameManagerPath);
+
+        File.Copy(gameManagerPath, backupGameManagerPath);
+    }
+}
+
+void ApplyPatch(AssetTypeValueField field, TomlTable patches, string[] parents)
 {
     foreach (var patch in patches)
     {
@@ -62,11 +107,11 @@ void ApplyPatch(AssetTypeValueField field, TomlTable patches)
         {
             if (Int32.TryParse(patch.Key, out int index))
             {
-                ApplyPatch(field[index], table);
+                ApplyPatch(field[index], table, [.. parents, patch.Key]);
             }
             else
             {
-                ApplyPatch(field[patch.Key], table);
+                ApplyPatch(field[patch.Key], table, [.. parents, patch.Key]);
             }
 
             continue;
@@ -108,7 +153,7 @@ void ApplyPatch(AssetTypeValueField field, TomlTable patches)
 
                         if (item is TomlTable innerTable)
                         {
-                            ApplyPatch(newItem, innerTable);
+                            ApplyPatch(newItem, innerTable, [.. parents, "Array"]);
                         }
 
                         field[key].Children.Add(newItem);
@@ -123,15 +168,12 @@ void ApplyPatch(AssetTypeValueField field, TomlTable patches)
                 continue;
         }
 
-        Console.Write(key);
-        Console.Write(": ");
-        Console.Write(fieldType);
-        Console.Write(" = ");
-        Console.WriteLine(field[key].AsString);
+
+        logger.LogInformation("{Parents}.{Key}: {Type} = {Value}", String.Join(".", parents), key, fieldType, field[key].AsString);
     }
 }
 
-Dictionary<string, List<AssetPatch>> getPatches(Config config)
+List<AssetPatch> getPatches(Config config)
 {
     List<string> patchFiles = [];
 
@@ -152,33 +194,29 @@ Dictionary<string, List<AssetPatch>> getPatches(Config config)
     return readPatchFiles(patchFiles);
 }
 
-Dictionary<string, List<AssetPatch>> readPatchFiles(List<string> patchFiles)
+List<AssetPatch> readPatchFiles(List<string> patchFiles)
 {
-    Dictionary<string, List<AssetPatch>> result = [];
+    List<AssetPatch> result = [];
 
     foreach (string path in patchFiles)
     {
-        TomlTable? data = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path));
+        if (!File.Exists(path))
+        {
+            throw new Exception(String.Format("File \"{0}\" not found", path));
+        }
 
-        if (data == null)
+        string patchConfigText = File.ReadAllText(path);
+
+        AssetPatch? patchObject = TomlSerializer.Deserialize<AssetPatch>(patchConfigText);
+
+        if (patchObject == null)
         {
             continue;
         }
 
-        string assetFile = data["assetFile"].ToString() ?? throw new Exception("Undefined assetFile");
+        logger.LogInformation("Patch file \"{File}\" added", path);
 
-        AssetPatch patch = new()
-        {
-            AssetPathId = (long)data["assetPathId"],
-            Patches = (TomlTable)data["patch"],
-        };
-
-        if (!result.ContainsKey(assetFile))
-        {
-            result.Add(assetFile, []);
-        }
-
-        result[assetFile].Add(patch);
+        result.Add(patchObject);
     }
 
     return result;
@@ -189,6 +227,7 @@ void setGameAssetPath(Config config)
     if (Path.Exists(config.GameAssetPath))
     {
         gameAssetPath = config.GameAssetPath;
+        logger.LogInformation("Game asset path set to: \"{GameAssetPath}\"", gameAssetPath);
         return;
     }
 
@@ -202,6 +241,7 @@ void setClassPackagePath(Config config)
         if (File.Exists(config.ClassPackage))
         {
             classPackage = config.ClassPackage;
+            logger.LogInformation("Class Package set to: \"{ClassPackage}\"", classPackage);
             return;
         }
     }
@@ -211,39 +251,33 @@ void setClassPackagePath(Config config)
         if (File.Exists(item))
         {
             classPackage = item;
+            logger.LogInformation("Class Package set to: \"{ClassPackage}\"", classPackage);
             return;
         }
     }
 
-    throw new Exception("TPK file not found");
+    throw new Exception("Class Package file not found");
 }
 
-void setBackupPath(Config config)
+void setupBackup(Config config)
 {
     backupPath = config.BackupPath;
 }
 
-void setManagedPath(Config config)
-{
-    managedPath = Path.Combine(config.GameAssetPath, "Managed");
-
-    if (!Path.Exists(managedPath))
-    {
-        throw new Exception("Failed to find \"Managed\" path in game data");
-    }
-}
-
 string configText = File.ReadAllText(configPath);
-Config config1 = JsonSerializer.Deserialize<Config>(configText) ?? throw new Exception("Config is not valid");
+Config config = JsonSerializer.Deserialize<Config>(configText) ?? throw new Exception("Config is not valid");
 
-setGameAssetPath(config1);
-setClassPackagePath(config1);
-setBackupPath(config1);
-setManagedPath(config1);
+logger.LogInformation("Read \"{ConfigPath}\"", configPath);
 
-Dictionary<string, List<AssetPatch>> patches = getPatches(config1);
+setGameAssetPath(config);
+setClassPackagePath(config);
+setupBackup(config);
 
-foreach (var patchGroup in patches)
+List<AssetPatch> patches = getPatches(config);
+
+var patchGroups = patches.GroupBy(patch => patch.AssetFile);
+
+foreach (var patchGroup in patchGroups)
 {
-    ApplyPatchesToFile(patchGroup.Key, patchGroup.Value);
+    ApplyPatchesToFile(patchGroup.Key, patchGroup.ToList());
 }

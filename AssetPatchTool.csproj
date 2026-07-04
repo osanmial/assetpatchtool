@@ -12,6 +12,8 @@
   <ItemGroup>
     <PackageReference Include="AssetsTools.NET" Version="3.0.4" />
     <PackageReference Include="AssetsTools.NET.MonoCecil" Version="3.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.9" />
     <PackageReference Include="Tomlyn" Version="2.9.0" />
   </ItemGroup>
 
