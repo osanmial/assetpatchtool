@@ -1,4 +1,7 @@
 bin/
 obj/
 patches/
+backup/
 *.tpk
+*.assets
+*.zip
