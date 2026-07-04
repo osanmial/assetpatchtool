@@ -262,6 +262,11 @@ void setClassPackagePath(Config config)
 void setupBackup(Config config)
 {
     backupPath = config.BackupPath;
+
+    if (!Directory.Exists(backupPath))
+    {
+        Directory.CreateDirectory(backupPath);
+    }
 }
 
 string configText = File.ReadAllText(configPath);
