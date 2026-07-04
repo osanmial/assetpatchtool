@@ -5,12 +5,16 @@ A [AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET) based command li
 
 ## Using AssetPatchTool
 
-AssetPatchTool is used by defining fields in "config.json" located in the same directiry as AssetPatchTool and then running AssetPatchTool without arguments. Error handling is currently very limited and crashes might not provide useful error messages.
+AssetPatchTool requires a TPK file and a "config.json" file to function.
 
-Necessary fields to define are:
+You can find a TPK file here https://github.com/AssetRipper/Tpk/blob/master/README.md. Because AssetPatchTool uses AssetsTools.NET Brotli compression is not supported. The TPK file should be placed in the same directorty as AssetPatchTool executable. 
+
+Config file is used to define parameters for AssetPatchTool and is mandatory for AssetPatchTool to run. config.json file should be placed in the same directory as AssetPatchTool executable.
+
+Config fields are:
 1) "game_asset_path" - This should point to the data directory of the Unity game, where you can find files "levelX" and "sharedassetsX.assets".
 
-2) "class_package" - This needs to point to a tpk file, which is needed to deserialize Unity asset files properly. You can find a tpk file here https://github.com/AssetRipper/Tpk/blob/master/README.md. Because AssetPatchTool uses AssetsTools.NET Brotli compression is not supported.
+2) "class_package" (optional) - By default AssetPatchTool searches for a appropriate TPK file from the same directory it's in. If your TPK file is elsewhere you can define path to it here.
 
 3) "patches" - This is a list of JSON objects defining paths to directories where patches are located. Search for patch files is not recursive currently.
 
@@ -21,9 +25,7 @@ Necessary fields to define are:
 }
 ```
 
-Running the AssetPatchTool creates copies of affected Unity asset into the current directory and patches them according to patch files.
-
-After this the patched files can be copied into the games data directory to overwrite the original ones. It is recommended to back up the original game files before doing so to have easy access to the unpatched files.
+Running AssetPatchTool modifies the asset files defined in "game_asset_path" while creating backups. These backups are used as base for future patches so reverting the game files between different versions of a mod is not necessary.
 
 ## Patch files
 
