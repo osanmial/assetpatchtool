@@ -1,5 +1,4 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Nodes;
 using AssetPatchTool;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
@@ -7,10 +6,13 @@ using Tomlyn;
 using Tomlyn.Model;
 
 const string managed = "Managed";
-const string config_path = "config.json";
+const string configPath = "config.json";
+string[] tpkPaths = ["lz4.tpk", "lzma_file.tpk", "uncompressed.tpk"];
 
 string gameAssetPath;
 string classPackage;
+string backupPath;
+string managedPath;
 
 
 void ApplyPatchesToFile(string assetFile, List<AssetPatch> patchGroup)
@@ -129,50 +131,32 @@ void ApplyPatch(AssetTypeValueField field, TomlTable patches)
     }
 }
 
-Dictionary<string, JsonNode> readConfig(string config_path)
+Dictionary<string, List<AssetPatch>> getPatches(Config config)
 {
-    string config_text = File.ReadAllText(config_path);
+    List<string> patchFiles = [];
 
-    Dictionary<string, JsonNode>? result = JsonSerializer.Deserialize<Dictionary<string, JsonNode>>(config_text);
-
-    return result ?? [];
-}
-
-Dictionary<string, List<AssetPatch>> getPatches(JsonArray patch_configs)
-{
-    List<string> files = [];
-
-    foreach (JsonNode? patch_config in patch_configs)
+    foreach (string patchPath in config.EnabledPatches())
     {
-        bool enabled = patch_config["enabled"].GetValue<bool>();
-        string path = patch_config["path"].ToString();
-
-        if (!enabled)
+        if (Path.EndsInDirectorySeparator(patchPath))
         {
-            continue;
-        }
-
-        if (Path.EndsInDirectorySeparator(path))
-        {
-            files.AddRange(Directory.GetFiles(path));
+            patchFiles.AddRange(Directory.GetFiles(patchPath));
         }
         else
         {
-            files.Add(path);
+            patchFiles.Add(patchPath);
         }
     }
 
-    files = files.FindAll(f => File.Exists(f));
+    patchFiles = patchFiles.FindAll(f => File.Exists(f));
 
-    return readPatchFiles(files);
-
+    return readPatchFiles(patchFiles);
 }
 
-Dictionary<string, List<AssetPatch>> readPatchFiles(List<string> filepaths)
+Dictionary<string, List<AssetPatch>> readPatchFiles(List<string> patchFiles)
 {
     Dictionary<string, List<AssetPatch>> result = [];
 
-    foreach (string path in filepaths)
+    foreach (string path in patchFiles)
     {
         TomlTable? data = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path));
 
@@ -200,30 +184,64 @@ Dictionary<string, List<AssetPatch>> readPatchFiles(List<string> filepaths)
     return result;
 }
 
-
-Dictionary<string, JsonNode> config = readConfig(config_path);
-
-gameAssetPath = config["game_asset_path"].ToString();
-classPackage = config["class_package"].ToString() ?? throw new Exception("Class package path undefined");
-
-if (string.IsNullOrEmpty(gameAssetPath))
+void setGameAssetPath(Config config)
 {
-    throw new Exception(
-        "\"game_asset_path\" in config.json is undefined or empty. This path should point to the game's data directory"
-        );
+    if (Path.Exists(config.GameAssetPath))
+    {
+        gameAssetPath = config.GameAssetPath;
+        return;
+    }
 
+    throw new Exception("\"game_asset_path\" not found");
 }
 
-if (string.IsNullOrEmpty(classPackage))
+void setClassPackagePath(Config config)
 {
-    throw new Exception(
-            "\"class_package\" in config.json is undefined or empty. It is a necessary file for reading asset files properly. Instructions on how to get one can be found int the README"
-            );
+    if (config.ClassPackage != null)
+    {
+        if (File.Exists(config.ClassPackage))
+        {
+            classPackage = config.ClassPackage;
+            return;
+        }
+    }
+
+    foreach (string item in tpkPaths)
+    {
+        if (File.Exists(item))
+        {
+            classPackage = item;
+            return;
+        }
+    }
+
+    throw new Exception("TPK file not found");
 }
 
-JsonArray patch_config = config["patches"] as JsonArray ?? [];
+void setBackupPath(Config config)
+{
+    backupPath = config.BackupPath;
+}
 
-Dictionary<string, List<AssetPatch>> patches = getPatches(patch_config);
+void setManagedPath(Config config)
+{
+    managedPath = Path.Combine(config.GameAssetPath, "Managed");
+
+    if (!Path.Exists(managedPath))
+    {
+        throw new Exception("Failed to find \"Managed\" path in game data");
+    }
+}
+
+string configText = File.ReadAllText(configPath);
+Config config1 = JsonSerializer.Deserialize<Config>(configText) ?? throw new Exception("Config is not valid");
+
+setGameAssetPath(config1);
+setClassPackagePath(config1);
+setBackupPath(config1);
+setManagedPath(config1);
+
+Dictionary<string, List<AssetPatch>> patches = getPatches(config1);
 
 foreach (var patchGroup in patches)
 {
