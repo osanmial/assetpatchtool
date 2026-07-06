@@ -114,7 +114,7 @@ void ApplyPatch(AssetTypeValueField field, TomlTable patches, string[] parents)
         switch (assetValueType)
         {
             case AssetValueType.String:
-                field[key].AsString = (string)value;
+                field[key].AsString = Convert.ToString(value);
                 break;
             case AssetValueType.Int32:
                 field[key].AsInt = Convert.ToInt32(value);
