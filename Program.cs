@@ -101,53 +101,32 @@ void ensureGlobalGameManagersExists()
 
 void ApplyPatch(AssetTypeValueField field, TomlTable patches, string[] parents)
 {
+    logger.LogDebug("{Parents}.{FieldName}: {FieldType} [Children: {ChildCount}]",
+        String.Join(".", parents),
+        field.TemplateField.Name,
+        field.TemplateField.Type,
+        field.Count());
+
+    logger.LogDebug(TomlSerializer.Serialize(patches));
+
     foreach (var patch in patches)
     {
         string key = patch.Key;
         object value = patch.Value;
 
-        string fieldName = field[key].TemplateField.Name;
-        string fieldType = field[key].TemplateField.Type;
-
-        // TODO: Put this thing into it's own function
         AssetValueType assetValueType = field[key].TemplateField.ValueType;
         switch (assetValueType)
         {
-            case AssetValueType.String:
-                field[key].AsString = Convert.ToString(value);
-                break;
-            case AssetValueType.Int32:
-                field[key].AsInt = Convert.ToInt32(value);
-                break;
-            case AssetValueType.Int64:
-                field[key].AsLong = Convert.ToInt64(value);
-                break;
-            case AssetValueType.UInt8:
-                field[key].AsByte = Convert.ToByte(value);
-                break;
-            case AssetValueType.Float:
-                field[key].AsFloat = Convert.ToSingle(value);
-                break;
-            case AssetValueType.Double:
-                field[key].AsDouble = Convert.ToDouble(value);
-                break;
             case AssetValueType.Array:
                 ApplyArrayValue(field[key], value, [.. parents, key]);
-                continue;
+                break;
             case AssetValueType.None:
                 ApplyObjectValue(field[key], value, [.. parents, key]);
-                continue;
+                break;
             default:
-                throw new Exception(String.Format("Unimplemented AssetValueType: {0}", assetValueType));
+                ApplyBasicValue(field[key], value, [.. parents, key]);
+                break;
         }
-
-        logger.LogDebug("{Parent}.{Key}: {Type} = {Value}",
-                        string.Join(".", parents),
-                        key,
-                        fieldType,
-                        field[key].AsString
-                        );
-
     }
 }
 
@@ -178,11 +157,11 @@ void ApplyArrayValue(AssetTypeValueField field, object value, string[] parents)
     }
     // In the rest of the cases we are replacing the whole array
     else if (value is TomlTableArray tableArray)
-                {
+    {
         field.Children.Clear();
         int index = 0;
         foreach (TomlTable itemParams in tableArray)
-                    {
+        {
             AssetTypeValueField newItem = ValueBuilder.DefaultValueFieldFromArrayTemplate(field);
 
             ApplyPatch(newItem, itemParams, [.. parents, index.ToString()]);
@@ -196,40 +175,19 @@ void ApplyArrayValue(AssetTypeValueField field, object value, string[] parents)
         int index = 0;
         foreach (object? itemParams in array)
         {
-            AssetTypeValueField newItem = ValueBuilder.DefaultValueFieldFromArrayTemplate(field);
+            if (itemParams == null)
+            {
+                throw new Exception("Null value inside array");
+            }
 
+            AssetTypeValueField newItem = ValueBuilder.DefaultValueFieldFromArrayTemplate(field);
             if (itemParams is TomlTable subTable)
-                        {
+            {
                 ApplyPatch(newItem, subTable, [.. parents, index.ToString()]);
-                        }
+            }
             else
             {
-                AssetValueType assetValueType = newItem.TemplateField.ValueType;
-                switch (assetValueType)
-                {
-                    case AssetValueType.String:
-                        newItem.AsString = Convert.ToString(itemParams);
-                        break;
-                    case AssetValueType.Int32:
-                        newItem.AsInt = Convert.ToInt32(itemParams);
-                        break;
-                    case AssetValueType.Int64:
-                        newItem.AsLong = Convert.ToInt64(itemParams);
-                        break;
-                    case AssetValueType.UInt8:
-                        newItem.AsByte = Convert.ToByte(itemParams);
-                        break;
-                    case AssetValueType.Float:
-                        newItem.AsFloat = Convert.ToSingle(itemParams);
-                        break;
-                    case AssetValueType.Double:
-                        newItem.AsDouble = Convert.ToDouble(itemParams);
-                        break;
-                    default:
-                        logger.LogDebug("{Name}: {Type}({Type2})", newItem.TemplateField.Name, newItem.TemplateField.Type, newItem.TemplateField.ValueType);
-
-                        throw new Exception("Unsupported type");
-                }
+                ApplyBasicValue(newItem, itemParams, [.. parents, index.ToString()]);
             }
 
             field.Children.Add(newItem);
@@ -249,6 +207,46 @@ void ApplyObjectValue(AssetTypeValueField field, object value, string[] parents)
         throw new Exception("Unimplemented Object Value type");
 
     }
+}
+
+void ApplyBasicValue(AssetTypeValueField field, object value, string[] parents)
+{
+    AssetValueType assetValueType = field.TemplateField.ValueType;
+    switch (assetValueType)
+    {
+        case AssetValueType.String:
+            field.AsString = Convert.ToString(value);
+            break;
+        case AssetValueType.Int32:
+            field.AsInt = Convert.ToInt32(value);
+            break;
+        case AssetValueType.Int64:
+            field.AsLong = Convert.ToInt64(value);
+            break;
+        case AssetValueType.UInt8:
+            field.AsByte = Convert.ToByte(value);
+            break;
+        case AssetValueType.Float:
+            field.AsFloat = Convert.ToSingle(value);
+            break;
+        case AssetValueType.Double:
+            field.AsDouble = Convert.ToDouble(value);
+            break;
+        default:
+            logger.LogError("{Name}: {Type}({Type2})",
+                field.TemplateField.Name,
+                field.TemplateField.Type,
+                field.TemplateField.ValueType);
+
+            throw new Exception("Unsupported type");
+    }
+
+    logger.LogInformation("{Parent}.{Key}: {Type} = {Value}",
+                   string.Join(".", parents),
+                   field.TemplateField.Name,
+                   field.TemplateField.Type,
+                   field.AsString
+                   );
 }
 
 List<AssetPatch> getPatches(Config config)
@@ -293,6 +291,7 @@ List<AssetPatch> readPatchFiles(List<string> patchFiles)
         }
 
         logger.LogInformation("Patch file \"{File}\" added", path);
+        logger.LogDebug(TomlSerializer.Serialize(patchObject));
 
         result.Add(patchObject);
     }
