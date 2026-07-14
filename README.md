@@ -16,7 +16,7 @@ Config fields are:
 
 2) "class_package" (optional) - By default AssetPatchTool searches for a appropriate TPK file from the same directory it's in. If your TPK file is elsewhere you can define path to it here.
 
-3) "patches" - This is a list of JSON objects defining paths to directories where patches are located. Search for patch files is not recursive currently.
+3) "patches" - This is a list of JSON objects defining paths to directories where patches are located. If path points to a directory, it is searched recursively.
 
 ```json
 {

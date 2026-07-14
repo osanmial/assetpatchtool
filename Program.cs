@@ -65,7 +65,7 @@ void ApplyPatchesToFile(string assetFileName, List<AssetPatch> patchGroup)
         var assetFileInfo = assetFile.GetAssetInfo(assetPatch.AssetPathId);
         var baseInfo = manager.GetBaseField(assetFileInstance, assetFileInfo);
 
-        if (baseInfo == null)
+        if (baseInfo == null || assetPatch.Patches == null)
         {
             continue;
         }
@@ -255,9 +255,30 @@ List<AssetPatch> getPatches(Config config)
 
     foreach (string patchPath in config.EnabledPatches())
     {
-        if (Path.EndsInDirectorySeparator(patchPath))
+        bool isDirectory = false;
+
+        try
         {
-            patchFiles.AddRange(Directory.GetFiles(patchPath));
+            FileAttributes attr = File.GetAttributes(patchPath);
+            isDirectory = attr.HasFlag(FileAttributes.Directory);
+        }
+        catch (ArgumentException)
+        {
+            continue;
+        }
+        catch (FileNotFoundException)
+        {
+            continue;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            continue;
+        }
+
+
+        if (isDirectory)
+        {
+            patchFiles.AddRange(Directory.GetFiles(patchPath, "*.toml", SearchOption.AllDirectories));
         }
         else
         {

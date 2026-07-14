@@ -15,5 +15,5 @@ public class AssetPatch
     public uint? AssetType = 144;
 
     [JsonPropertyName("patch")]
-    public TomlTable Patches { get; set; } = default!;
+    public TomlTable? Patches { get; set; }
 }
